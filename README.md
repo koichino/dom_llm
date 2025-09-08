@@ -1,139 +1,106 @@
-# Infra (Bicep) + Runbook sample
+# インフラ (Bicep) + Automation Runbook サンプル (日本語版)
 
-This repository contains a modular Bicep layout for Azure infrastructure, starting with an Automation Account and a placeholder VMSS module. It also includes a sample PowerShell Runbook script.
+このリポジトリは Azure Automation Account + (将来的に拡張可能な) VM Scale Set 管理向けのモジュール型 Bicep 構成と、VMSS 起動/停止用 PowerShell Runbook、平日スケジュール (月～金) をデプロイするサンプルです。現在は統合された **サブスクリプション スコープ** テンプレート `infra/main.bicep` を使用します。
 
-Structure
-- infra/main.bicep - root Bicep file that composes modules
-- infra/modules/automationAccount.bicep - module to create Automation Account
-- infra/modules/vmss.bicep - placeholder VMSS module
-- runbook.ps1 - sample runbook script to upload to Automation
+## 構成概要
+- `infra/main.bicep` : サブスクリプションスコープ (RG 作成 + モジュール呼び出し)
+- `infra/modules/automationAccount.bicep` : Automation Account + Managed Identity + 役割割り当て
+- `infra/modules/runbooksAndSchedules.bicep` : Runbook (Start/Stop) & 平日スケジュール & JobSchedule
+- `infra/modules/vmss.bicep` : 将来の VMSS 定義用プレースホルダ
+- `infra/parameters/main.parameters.json` : 単一パラメータファイル
+- `runbooks/runbook-start-vmss.ps1` / `runbooks/runbook-stop-vmss.ps1` : VMSS 起動/停止 Runbook (週末スキップロジックあり)
 
-Quick deploy (local, PowerShell)
-1. Login and set subscription
+## 主なパラメータ (抜粋)
+| 名前 | 説明 |
+|------|------|
+| location | デプロイ先リージョン (例: japaneast) |
+| resourceGroupName | 作成/再利用する RG 名 |
+| reuseExistingRg | true=既存 RG 再利用 / false=新規作成 |
+| automationAccountName | Automation Account 名 (グローバル一意) |
+| vmssName | 対象 VMSS 名 (将来拡張用) |
+| startScheduleTime | ローカル (Tokyo Standard Time) 開始時刻 (HH:MM) |
+| stopScheduleTime | ローカル停止時刻 (HH:MM, 24:00 可) |
+| scheduleAnchorDate | 初回開始日 (YYYY-MM-DD, ローカル時間として解釈) |
+| runbookContentVersion | Runbook コンテンツ強制更新用バージョン |
+| jobScheduleVersion | JobSchedule 再生成用バージョン |
+| startJobScheduleSalt / stopJobScheduleSalt | 片方のみ再生成したい場合の追加シード |
 
-```powershell
-az login
-az account set --subscription <YOUR_SUBSCRIPTION_ID>
-```
+## スケジュール仕様
+* 平日 (Mon–Fri) のみ実行 (`advancedSchedule.weekDays`).
+* `startScheduleTime`, `stopScheduleTime` は `timeZone` (既定: Tokyo Standard Time) のローカル時刻文字列。
+* `stopScheduleTime` を `24:00` とすると翌日 00:00 と解釈。
+* Automation 側で `startTime` は `YYYY-MM-DDTHH:MM:SS` 形式 + `timeZone` によりローカル変換されます。
 
-2. Create resource group
-
-```powershell
-az group create --name rg-automation-demo --location eastus
-```
-
-3. Deploy Bicep
-
-```powershell
-az deployment group create --resource-group rg-automation-demo --template-file infra/main.bicep --parameters prefix=demo
-```
-
-4. Create and publish Runbook (example)
-
-```powershell
-$rg = 'rg-automation-demo'
-$aa = 'demo-aa'
-$runbook = 'rb-demo-script'
-
-az automation runbook create --resource-group $rg --automation-account-name $aa --name $runbook --type PowerShell --description 'Sample runbook'
-$scriptContent = Get-Content -Raw -Path runbook.ps1
-az automation runbook draft replace-content --resource-group $rg --automation-account-name $aa --runbook-name $runbook --content "$scriptContent"
-az automation runbook publish --resource-group $rg --automation-account-name $aa --name $runbook
-```
-
-CI/CD notes
-- Use GitHub Actions with the `azure/login` action and OIDC when possible.
-- Keep secrets/credentials in Key Vault and use managed identities for runtime access.
-
-Security & best practices
-- Prefer managed identities for runbook access to other Azure resources.
-- Pin API versions in Bicep modules and keep modules small and testable.
-
-Deploy (Bicep -> verify identity & role -> upload Runbooks)
------------------------------------------------
-
-The commands below are PowerShell-ready and assume you are in the repository root. Replace values where noted.
-
-1) Login, set subscription and variables
-
+## デプロイ手順 (PowerShell / ルートディレクトリ)
 ```powershell
 az login
 az account set --subscription <YOUR_SUBSCRIPTION_ID>
 
-$rg = 'rg-automation-demo'
-$location = 'eastus'
-$prefix = 'demo'
-$deploymentName = 'infra-deploy'
-$automationAccountName = "${prefix}-aa"
-$vmssName = "${prefix}-vmss"
-$startRunbook = 'rb-start-vmss'
-$stopRunbook = 'rb-stop-vmss'
+# （必要ならパラメータファイルを編集）
+$deploymentName = "deploy-$(Get-Date -Format yyyyMMddHHmmss)"
+az deployment sub create `
+	--name $deploymentName `
+	--location japaneast `
+	--template-file infra/main.bicep `
+	--parameters @infra/parameters/main.parameters.json `
+	-o table
 ```
 
-2) Create resource group and deploy the Bicep (root: `infra/main.bicep`)
-
+### 出力確認
 ```powershell
-az group create --name $rg --location $location
-
-az deployment group create --name $deploymentName --resource-group $rg --template-file infra/main.bicep --parameters prefix=$prefix automationAccountName=$automationAccountName vmssName=$vmssName resourceGroupName=$rg -o table
+az deployment sub show --name $deploymentName --query properties.outputs
 ```
 
-3) Verify Automation Account identity and role assignment
-
-Get the principalId that was output by the deployment and list role assignments for it:
-
+### スケジュール / Runbook 確認
 ```powershell
-$principalId = az deployment group show --resource-group $rg --name $deploymentName --query "properties.outputs.automationAccountPrincipalId.value" -o tsv
-Write-Output "Automation principalId: $principalId"
-
-az role assignment list --assignee $principalId --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$rg" -o table
+$params = Get-Content infra/parameters/main.parameters.json | ConvertFrom-Json
+$rg  = $params.parameters.resourceGroupName.value
+$aa  = $params.parameters.automationAccountName.value
+az automation runbook list -g $rg -a $aa -o table
+az automation schedule list -g $rg -a $aa -o table
 ```
 
-If the role assignment does not appear immediately it may take a short time to propagate. You can retry the previous command or check in the portal.
+## バージョン/再生成の運用ルール
+| 目的 | 変更する値 |
+|------|-------------|
+| Runbook スクリプト内容更新を強制 | `runbookContentVersion` をインクリメント |
+| Start/Stop 両 JobSchedule 再生成 | `jobScheduleVersion` をインクリメント |
+| Start のみ再生成 | `startJobScheduleSalt` を新しい文字列に変更 |
+| Stop のみ再生成 | `stopJobScheduleSalt` を新しい文字列に変更 |
+| 初回発火日をずらす | `scheduleAnchorDate` を未来日 (YYYY-MM-DD) へ |
 
-4) Upload and publish Runbooks
+## トラブルシュート
+| 症状 | 原因 | 対処 |
+|------|------|------|
+| Schedule BadRequest (startTime) | 過去日時 / 不正フォーマット | `scheduleAnchorDate` を未来日に / HH:MM 形式確認 |
+| jobSchedule Conflict | GUID シード同一 | `jobScheduleVersion` か salt を変更 |
+| Runbook がリンク表示されない | jobSchedule 生成失敗 | Conflict 解消後再デプロイ |
+| 時刻がずれている | ローカル/JST と UTC の解釈ミス | Local モード (現行) では `timeZone` を正しく維持 |
 
-This example uses PowerShell to read runbook files from `runbooks/` and upload them to the Automation Account (creates the runbook if missing, replaces draft content and publishes):
+## セキュリティ / ベストプラクティス
+* Managed Identity を利用し資格情報をコードに埋め込まない。
+* 最小権限 (Contributor など必要最小ロール) を対象 RG / VMSS に付与。
+* Bicep モジュールは小さく分割し API バージョンを固定。
+* CI/CD は GitHub Actions + OIDC (`azure/login`) + Key Vault シークレット参照推奨。
 
+## 既存 VMSS への権限付与
+`automation/assign-role-to-vmss.ps1` を利用して Automation Account MI に対象 VMSS への Contributor を付与可能:
 ```powershell
-# Start Runbook
-az automation runbook create --resource-group $rg --automation-account-name $automationAccountName --name $startRunbook --type PowerShell --description 'Start VMSS runbook' 2>$null || Write-Output "Runbook may already exist"
-$script = Get-Content -Raw -Path runbooks/runbook-start-vmss.ps1
-az automation runbook draft replace-content --resource-group $rg --automation-account-name $automationAccountName --runbook-name $startRunbook --content "$script"
-az automation runbook publish --resource-group $rg --automation-account-name $automationAccountName --name $startRunbook
-
-# Stop Runbook
-az automation runbook create --resource-group $rg --automation-account-name $automationAccountName --name $stopRunbook --type PowerShell --description 'Stop VMSS runbook' 2>$null || Write-Output "Runbook may already exist"
-$script = Get-Content -Raw -Path runbooks/runbook-stop-vmss.ps1
-az automation runbook draft replace-content --resource-group $rg --automation-account-name $automationAccountName --runbook-name $stopRunbook --content "$script"
-az automation runbook publish --resource-group $rg --automation-account-name $automationAccountName --name $stopRunbook
+./automation/assign-role-to-vmss.ps1 -ResourceGroupName <RG> -AutomationAccountName <AA> -VmssName <VMSS>
 ```
 
-5) (Optional) Create schedules and link runbooks
+## 休日/祝日除外など拡張案
+| 要件 | 方針 (例) |
+|------|-----------|
+| 祝日スキップ | Runbook 冒頭で日本の祝日 API/テーブルを参照し早期 return |
+| 複数時間帯 | 追加スケジュールと別 Runbook/パラメータ化 |
+| 地域別時差 | `timeZone` パラメータを許可配列拡張 + 必要ならローカル→UTC 変換モード復活 |
 
+## クリーンアップ
 ```powershell
-.
-# Use the included helper to create schedules and link runbooks (this uses az REST to set Mon-Fri recurrence)
-.
-.
-.
-./automation/setup-schedules.ps1 -ResourceGroupName $rg -AutomationAccountName $automationAccountName -StartRunbookName $startRunbook -StopRunbookName $stopRunbook -TimeZone 'UTC'
+az group delete --name <resourceGroupName> --yes --no-wait
 ```
 
-Notes
-- Ensure the Az modules required by the runbooks are installed into the Automation Account (Modules blade) or use Hybrid Worker with modules preinstalled.
-- Use Managed Identity and least-privilege role assignments for production.
-
-Assigning role to an existing VMSS
-----------------------------------
-If you want the Automation Account to manage a specific existing VM Scale Set, grant the Automation Account's managed identity the Contributor role on that VMSS resource (least privilege for this scenario).
-
-Usage (example):
-
-```powershell
-# Assign Contributor on the VMSS named 'my-vmss' in the resource group
-./automation/assign-role-to-vmss.ps1 -ResourceGroupName $rg -AutomationAccountName $automationAccountName -VmssName 'my-vmss'
-```
-
-The helper will resolve the VMSS resource id and create a role assignment for the Automation principal created by the deployment. If you prefer, pass a full resource id with `-VmssResourceId`.
+---
+質問や追加要望 (祝日対応/本番向け強化など) があれば Issue / PR / 追加依頼をしてください。
 

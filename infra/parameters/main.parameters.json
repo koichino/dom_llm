@@ -11,9 +11,12 @@
     "runbookStopUrl": { "value": "https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-stop-vmss.ps1" },
     "startScheduleTime": { "value": "08:00" },
     "stopScheduleTime": { "value": "00:00" },
-    "timeZone": { "value": "Tokyo Standard Time" },
+  "timeZone": { "value": "Tokyo Standard Time" },
+  "scheduleAnchorDate": { "value": "2025-09-09" },
     "runbookContentVersion": { "value": "1.0.1" },
     "jobScheduleVersion": { "value": "2" },
+  "startJobScheduleSalt": { "value": "a" },
+  "stopJobScheduleSalt": { "value": "a" },
   "reuseExistingRg": { "value": false }
   }
 }

@@ -9,29 +9,38 @@ param stopRunbookName string = 'rb-stop-vmss'
 param runbookStartUrl string
 @description('Raw content URL for stop runbook (PowerShell). Typically a GitHub raw URL.')
 param runbookStopUrl string
-@description('Time (HH:MM, 24h, UTC) to start the VMSS on weekdays.')
+@description('Start time (HH:MM) in local timeZone (e.g. Tokyo Standard Time).')
 param startScheduleTime string = '08:00'
-@description('Time (HH:MM, 24h, UTC) to stop the VMSS on weekdays.')
-param stopScheduleTime string = '00:00'
-@description('TZ name (IANA/Windows) for display only; schedules use UTC times with advancedSchedule hours/minutes.')
-param timeZone string = 'Asia/Tokyo'
+@description('Stop time (HH:MM) in local timeZone. Use 24:00 for next-day midnight.')
+param stopScheduleTime string = '24:00'
+@description('TZ name (display only); schedules use UTC times.')
+param timeZone string = 'Tokyo Standard Time'
 @description('VM Scale Set resource group name (parameter passed to runbooks).')
 param vmssResourceGroupName string
 @description('VM Scale Set name (parameter passed to runbooks).')
 param vmssName string
 
-@description('Anchor start time (ISO 8601) for schedules startTime; default utcNow().')
-param scheduleAnchorTime string = utcNow()
-
 @description('Version string to force republish of runbook content (change to trigger overwrite).')
 param runbookContentVersion string = '1.0.0'
 @description('Version to force recreation of jobSchedules (increment to rebuild job schedules)')
 param jobScheduleVersion string = '1'
+@description('Salt to force recreation of START job schedule independently (optional)')
+param startJobScheduleSalt string = ''
+@description('Salt to force recreation of STOP job schedule independently (optional)')
+param stopJobScheduleSalt string = ''
 
-// Compose first occurrence times (anchor date portion + provided HH:MM)
-var anchorDate = split(scheduleAnchorTime, 'T')[0]
-var startTimeIso = '${anchorDate}T${startScheduleTime}:00Z'
-var stopTimeIso = '${anchorDate}T${stopScheduleTime}:00Z'
+@description('Anchor date (YYYY-MM-DD) for first schedule run (provided by parent).')
+param scheduleAnchorDate string
+
+// Local time handling: build start/stop DateTime strings interpreted in provided timeZone by Automation.
+// Handle 24:00 (next day midnight)
+var stopIsNextDay = startsWith(stopScheduleTime, '24:')
+var effectiveStopHour = stopIsNextDay ? '00' : split(stopScheduleTime, ':')[0]
+var effectiveStopMin = split(stopScheduleTime, ':')[1]
+var nextDayDate = split(dateTimeAdd('${scheduleAnchorDate}T00:00:00Z','P1D'),'T')[0]
+var startTimeIso = '${scheduleAnchorDate}T${startScheduleTime}:00'
+var stopBaseDate = stopIsNextDay ? nextDayDate : scheduleAnchorDate
+var stopTimeIso = '${stopBaseDate}T${effectiveStopHour}:${effectiveStopMin}:00'
 
 
 // Runbooks (content via publishContentLink)
@@ -70,30 +79,51 @@ resource stopRunbook 'Microsoft.Automation/automationAccounts/runbooks@2020-01-1
 resource weekdayStart 'Microsoft.Automation/automationAccounts/schedules@2020-01-13-preview' = {
   name: '${automationAccountName}/WeekdayStart'
   properties: {
-  description: 'Daily start schedule (${timeZone}) - filter to weekdays via runbook logic if needed'
-  startTime: startTimeIso
+    description: 'Weekday (Mon-Fri) start schedule (${timeZone})'
+    startTime: startTimeIso
     expiryTime: '2099-12-31T00:00:00Z'
-    frequency: 'Day'
+    frequency: 'Week'
     interval: 1
     timeZone: timeZone
+    advancedSchedule: {
+      weekDays: [
+        'Monday'
+        'Tuesday'
+        'Wednesday'
+        'Thursday'
+        'Friday'
+      ]
+    }
   }
 }
 
 resource weekdayStop 'Microsoft.Automation/automationAccounts/schedules@2020-01-13-preview' = {
   name: '${automationAccountName}/WeekdayStop'
   properties: {
-  description: 'Daily stop schedule (${timeZone}) - filter to weekdays via runbook logic if needed'
-  startTime: stopTimeIso
+    description: 'Weekday (Mon-Fri) stop schedule (${timeZone})'
+    startTime: stopTimeIso
     expiryTime: '2099-12-31T00:00:00Z'
-    frequency: 'Day'
+    frequency: 'Week'
     interval: 1
     timeZone: timeZone
+    advancedSchedule: {
+      weekDays: [
+        'Monday'
+        'Tuesday'
+        'Wednesday'
+        'Thursday'
+        'Friday'
+      ]
+    }
   }
 }
 
 // Job schedules linking schedule -> runbook with parameters
+var startJobGuidSeed = empty(startJobScheduleSalt) ? jobScheduleVersion : '${jobScheduleVersion}-${startJobScheduleSalt}'
+var stopJobGuidSeed = empty(stopJobScheduleSalt) ? jobScheduleVersion : '${jobScheduleVersion}-${stopJobScheduleSalt}'
+
 resource weekdayStartJob 'Microsoft.Automation/automationAccounts/jobSchedules@2020-01-13-preview' = {
-  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStartJob', jobScheduleVersion)}'
+  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStartJob', startJobGuidSeed)}'
   properties: {
     runbook: {
       name: startRunbookName
@@ -112,7 +142,7 @@ resource weekdayStartJob 'Microsoft.Automation/automationAccounts/jobSchedules@2
 }
 
 resource weekdayStopJob 'Microsoft.Automation/automationAccounts/jobSchedules@2020-01-13-preview' = {
-  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStopJob', jobScheduleVersion)}'
+  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStopJob', stopJobGuidSeed)}'
   properties: {
     runbook: {
       name: stopRunbookName

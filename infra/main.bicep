@@ -26,6 +26,12 @@ param timeZone string = 'Tokyo Standard Time'
 param runbookContentVersion string = '1.0.0'
 @description('Version to force recreation of job schedules (change to recreate)')
 param jobScheduleVersion string = '1'
+@description('Salt to force recreation of START job schedule (optional)')
+param startJobScheduleSalt string = ''
+@description('Salt to force recreation of STOP job schedule (optional)')
+param stopJobScheduleSalt string = ''
+@description('Anchor date (YYYY-MM-DD) for first schedule run; override to tomorrow if current time already passed desired HH:MM today')
+param scheduleAnchorDate string = split(utcNow(), 'T')[0]
 @description('Reuse existing resource group instead of creating it')
 param reuseExistingRg bool = false
 
@@ -75,6 +81,9 @@ module runbooks 'modules/runbooksAndSchedules.bicep' = {
     vmssName: vmssName
     runbookContentVersion: runbookContentVersion
     jobScheduleVersion: jobScheduleVersion
+  startJobScheduleSalt: startJobScheduleSalt
+  stopJobScheduleSalt: stopJobScheduleSalt
+  scheduleAnchorDate: scheduleAnchorDate
   }
 }
 
