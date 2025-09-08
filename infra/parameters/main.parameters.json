@@ -10,13 +10,10 @@
     "runbookStartUrl": { "value": "https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-start-vmss.ps1" },
     "runbookStopUrl": { "value": "https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-stop-vmss.ps1" },
     "startScheduleTime": { "value": "08:00" },
-    "stopScheduleTime": { "value": "00:00" },
-  "timeZone": { "value": "Tokyo Standard Time" },
-  "scheduleAnchorDate": { "value": "2025-09-09" },
+  "stopScheduleTime": { "value": "24:00" },
+  "timeZone": { "value": "Asia/Tokyo" },
     "runbookContentVersion": { "value": "1.0.1" },
-    "jobScheduleVersion": { "value": "2" },
-  "startJobScheduleSalt": { "value": "a" },
-  "stopJobScheduleSalt": { "value": "a" },
+  "jobScheduleVersion": { "value": "2" },
   "reuseExistingRg": { "value": false }
   }
 }

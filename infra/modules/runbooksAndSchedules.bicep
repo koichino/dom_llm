@@ -14,7 +14,7 @@ param startScheduleTime string = '08:00'
 @description('Stop time (HH:MM) in local timeZone. Use 24:00 for next-day midnight.')
 param stopScheduleTime string = '24:00'
 @description('TZ name (display only); schedules use UTC times.')
-param timeZone string = 'Tokyo Standard Time'
+param timeZone string = 'Asia/Tokyo'
 @description('VM Scale Set resource group name (parameter passed to runbooks).')
 param vmssResourceGroupName string
 @description('VM Scale Set name (parameter passed to runbooks).')
@@ -24,22 +24,26 @@ param vmssName string
 param runbookContentVersion string = '1.0.0'
 @description('Version to force recreation of jobSchedules (increment to rebuild job schedules)')
 param jobScheduleVersion string = '1'
-@description('Salt to force recreation of START job schedule independently (optional)')
-param startJobScheduleSalt string = ''
-@description('Salt to force recreation of STOP job schedule independently (optional)')
-param stopJobScheduleSalt string = ''
 
 @description('Anchor date (YYYY-MM-DD) for first schedule run (provided by parent).')
 param scheduleAnchorDate string
 
-// Local time handling: build start/stop DateTime strings interpreted in provided timeZone by Automation.
-// Handle 24:00 (next day midnight)
+// --- Simplified schedule logic (no timezone conversion) ---
+// 1. Normalize anchor date (YYYYMMDD -> YYYY-MM-DD)
+// 2. Use that date directly for start
+// 3. If stop = 24:MM treat as next day 00:MM (Automation accepts 00:00 next day)
+// 4. GUID recreation only by changing jobScheduleVersion
+
+var baseDateRaw = scheduleAnchorDate
+var normalizedBaseDate = length(baseDateRaw) == 8 ? '${substring(baseDateRaw,0,4)}-${substring(baseDateRaw,4,2)}-${substring(baseDateRaw,6,2)}' : baseDateRaw
+
 var stopIsNextDay = startsWith(stopScheduleTime, '24:')
 var effectiveStopHour = stopIsNextDay ? '00' : split(stopScheduleTime, ':')[0]
 var effectiveStopMin = split(stopScheduleTime, ':')[1]
-var nextDayDate = split(dateTimeAdd('${scheduleAnchorDate}T00:00:00Z','P1D'),'T')[0]
-var startTimeIso = '${scheduleAnchorDate}T${startScheduleTime}:00'
-var stopBaseDate = stopIsNextDay ? nextDayDate : scheduleAnchorDate
+var nextDayDate = split(dateTimeAdd('${normalizedBaseDate}T00:00:00Z','P1D'),'T')[0]
+var stopBaseDate = stopIsNextDay ? nextDayDate : normalizedBaseDate
+
+var startTimeIso = '${normalizedBaseDate}T${startScheduleTime}:00'
 var stopTimeIso = '${stopBaseDate}T${effectiveStopHour}:${effectiveStopMin}:00'
 
 
@@ -75,7 +79,8 @@ resource stopRunbook 'Microsoft.Automation/automationAccounts/runbooks@2020-01-1
 }
 
 // Weekday schedules (Mon-Fri) using advancedSchedule
-// NOTE: hours/minutes arrays not currently validated in type metadata; using simple daily schedule.
+// NOTE: hours/minutes arrays not currently validated in type metadata; using simple weekly schedule with fixed names.
+
 resource weekdayStart 'Microsoft.Automation/automationAccounts/schedules@2020-01-13-preview' = {
   name: '${automationAccountName}/WeekdayStart'
   properties: {
@@ -84,7 +89,7 @@ resource weekdayStart 'Microsoft.Automation/automationAccounts/schedules@2020-01
     expiryTime: '2099-12-31T00:00:00Z'
     frequency: 'Week'
     interval: 1
-    timeZone: timeZone
+  timeZone: timeZone
     advancedSchedule: {
       weekDays: [
         'Monday'
@@ -105,7 +110,7 @@ resource weekdayStop 'Microsoft.Automation/automationAccounts/schedules@2020-01-
     expiryTime: '2099-12-31T00:00:00Z'
     frequency: 'Week'
     interval: 1
-    timeZone: timeZone
+  timeZone: timeZone
     advancedSchedule: {
       weekDays: [
         'Monday'
@@ -119,8 +124,8 @@ resource weekdayStop 'Microsoft.Automation/automationAccounts/schedules@2020-01-
 }
 
 // Job schedules linking schedule -> runbook with parameters
-var startJobGuidSeed = empty(startJobScheduleSalt) ? jobScheduleVersion : '${jobScheduleVersion}-${startJobScheduleSalt}'
-var stopJobGuidSeed = empty(stopJobScheduleSalt) ? jobScheduleVersion : '${jobScheduleVersion}-${stopJobScheduleSalt}'
+var startJobGuidSeed = jobScheduleVersion
+var stopJobGuidSeed = jobScheduleVersion
 
 resource weekdayStartJob 'Microsoft.Automation/automationAccounts/jobSchedules@2020-01-13-preview' = {
   name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStartJob', startJobGuidSeed)}'
@@ -130,7 +135,7 @@ resource weekdayStartJob 'Microsoft.Automation/automationAccounts/jobSchedules@2
     }
     schedule: {
     // For jobSchedules, the schedule name must be the short name (without automation account prefix)
-    name: 'WeekdayStart'
+  name: 'WeekdayStart'
     }
     parameters: {
       ResourceGroupName: vmssResourceGroupName
@@ -149,7 +154,7 @@ resource weekdayStopJob 'Microsoft.Automation/automationAccounts/jobSchedules@20
     }
     schedule: {
     // Use short schedule name
-    name: 'WeekdayStop'
+  name: 'WeekdayStop'
     }
     parameters: {
       ResourceGroupName: vmssResourceGroupName

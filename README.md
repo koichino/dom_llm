@@ -23,7 +23,7 @@
 | scheduleAnchorDate | 初回開始日 (YYYY-MM-DD, ローカル時間として解釈) |
 | runbookContentVersion | Runbook コンテンツ強制更新用バージョン |
 | jobScheduleVersion | JobSchedule 再生成用バージョン |
-| startJobScheduleSalt / stopJobScheduleSalt | 片方のみ再生成したい場合の追加シード |
+| (削除) startJobScheduleSalt / stopJobScheduleSalt | 現在未使用 (過去の細粒度再生成向け) |
 
 ## スケジュール仕様
 * 平日 (Mon–Fri) のみ実行 (`advancedSchedule.weekDays`).
@@ -65,8 +65,7 @@ az automation schedule list -g $rg -a $aa -o table
 |------|-------------|
 | Runbook スクリプト内容更新を強制 | `runbookContentVersion` をインクリメント |
 | Start/Stop 両 JobSchedule 再生成 | `jobScheduleVersion` をインクリメント |
-| Start のみ再生成 | `startJobScheduleSalt` を新しい文字列に変更 |
-| Stop のみ再生成 | `stopJobScheduleSalt` を新しい文字列に変更 |
+| Start/Stop JobSchedule 再生成 | `jobScheduleVersion` をインクリメント |
 | 初回発火日をずらす | `scheduleAnchorDate` を未来日 (YYYY-MM-DD) へ |
 
 ## トラブルシュート

@@ -12,24 +12,16 @@ param vmssName string
 param runbookStartUrl string = 'https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-start-vmss.ps1'
 @description('Raw URL (GitHub raw) to the stop VMSS runbook PowerShell script')
 param runbookStopUrl string = 'https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-stop-vmss.ps1'
-@description('HH:MM (UTC) weekday start time')
+@description('平日開始時刻 (HH:MM) 指定 timeZone のローカル時刻')
 param startScheduleTime string = '08:00'
-@description('HH:MM (UTC) weekday stop time')
+@description('平日停止時刻 (HH:MM) 指定 timeZone のローカル時刻。24:00 可')
 param stopScheduleTime string = '00:00'
-@allowed([
-  'UTC'
-  'Tokyo Standard Time'
-])
-@description('Display time zone (schedules use UTC internally)')
+@description('スケジュール解釈用タイムゾーン (例: Tokyo Standard Time)')
 param timeZone string = 'Tokyo Standard Time'
 @description('Runbook content version (change to force overwrite on redeploy)')
 param runbookContentVersion string = '1.0.0'
 @description('Version to force recreation of job schedules (change to recreate)')
 param jobScheduleVersion string = '1'
-@description('Salt to force recreation of START job schedule (optional)')
-param startJobScheduleSalt string = ''
-@description('Salt to force recreation of STOP job schedule (optional)')
-param stopJobScheduleSalt string = ''
 @description('Anchor date (YYYY-MM-DD) for first schedule run; override to tomorrow if current time already passed desired HH:MM today')
 param scheduleAnchorDate string = split(utcNow(), 'T')[0]
 @description('Reuse existing resource group instead of creating it')
@@ -81,8 +73,6 @@ module runbooks 'modules/runbooksAndSchedules.bicep' = {
     vmssName: vmssName
     runbookContentVersion: runbookContentVersion
     jobScheduleVersion: jobScheduleVersion
-  startJobScheduleSalt: startJobScheduleSalt
-  stopJobScheduleSalt: stopJobScheduleSalt
   scheduleAnchorDate: scheduleAnchorDate
   }
 }
