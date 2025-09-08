@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "value": "japaneast" },
+    "resourceGroupName": { "value": "rg-domllm-demo" },
+    "prefix": { "value": "demo" },
+    "automationAccountName": { "value": "demo-auto-accnt" },
+    "vmssName": { "value": "demo-vmss" },
+    "runbookStartUrl": { "value": "https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-start-vmss.ps1" },
+    "runbookStopUrl": { "value": "https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-stop-vmss.ps1" },
+    "startScheduleTime": { "value": "08:00" },
+    "stopScheduleTime": { "value": "00:00" },
+    "timeZone": { "value": "Tokyo Standard Time" },
+    "runbookContentVersion": { "value": "1.0.1" },
+    "jobScheduleVersion": { "value": "2" },
+  "reuseExistingRg": { "value": false }
+  }
+}

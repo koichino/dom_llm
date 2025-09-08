@@ -1,13 +1,13 @@
-// Root Bicep that composes modular infra resources (Automation Account, VMSS, etc.).
-param location string = resourceGroup().location
-param prefix string = 'demo'
-@description('The name of the resource group where resources are deployed. Defaults to the current deployment resource group.')
-param resourceGroupName string = resourceGroup().name
-@description('Name of the Automation Account to create (pass at deployment time)')
-param automationAccountName string
-@description('Name of the VM Scale Set (vmss) to manage (pass at deployment time)')
-param vmssName string
+targetScope = 'subscription'
 
+// Unified subscription-scope template (creates or reuses RG, then deploys modules). This replaces former main.subscription.bicep + group main.
+param location string
+param resourceGroupName string
+param prefix string = 'demo'
+@description('Name of the Automation Account to create')
+param automationAccountName string
+@description('Name of the VM Scale Set (managed by runbooks)')
+param vmssName string
 @description('Raw URL (GitHub raw) to the start VMSS runbook PowerShell script')
 param runbookStartUrl string = 'https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-start-vmss.ps1'
 @description('Raw URL (GitHub raw) to the stop VMSS runbook PowerShell script')
@@ -16,39 +16,49 @@ param runbookStopUrl string = 'https://raw.githubusercontent.com/koichino/dom_ll
 param startScheduleTime string = '08:00'
 @description('HH:MM (UTC) weekday stop time')
 param stopScheduleTime string = '00:00'
-@description('Time zone label (display only)')
 @allowed([
   'UTC'
   'Tokyo Standard Time'
 ])
+@description('Display time zone (schedules use UTC internally)')
 param timeZone string = 'Tokyo Standard Time'
 @description('Runbook content version (change to force overwrite on redeploy)')
 param runbookContentVersion string = '1.0.0'
 @description('Version to force recreation of job schedules (change to recreate)')
 param jobScheduleVersion string = '1'
+@description('Reuse existing resource group instead of creating it')
+param reuseExistingRg bool = false
 
-// Automation Account module
-// Automation Account module
+// Resource group (conditional)
+resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = if (!reuseExistingRg) {
+  name: resourceGroupName
+  location: location
+  tags: {
+    'azd-env-name': prefix
+  }
+}
+
+// Modules deployed into RG
 module automation 'modules/automationAccount.bicep' = {
   name: 'automationAccountModule'
   scope: resourceGroup(resourceGroupName)
+  dependsOn: [ rg ]
   params: {
     name: automationAccountName
     location: location
   }
 }
 
-// VMSS module (placeholder) - extend this when adding VMSS configuration
 module vmss 'modules/vmss.bicep' = {
   name: 'vmssModule'
   scope: resourceGroup(resourceGroupName)
+  dependsOn: [ rg ]
   params: {
     name: vmssName
     location: location
   }
 }
 
-// Runbooks & schedules (optional: only if URLs provided)
 module runbooks 'modules/runbooksAndSchedules.bicep' = {
   name: 'runbooksModule'
   scope: resourceGroup(resourceGroupName)
@@ -64,7 +74,7 @@ module runbooks 'modules/runbooksAndSchedules.bicep' = {
     vmssResourceGroupName: resourceGroupName
     vmssName: vmssName
     runbookContentVersion: runbookContentVersion
-  jobScheduleVersion: jobScheduleVersion
+    jobScheduleVersion: jobScheduleVersion
   }
 }
 
