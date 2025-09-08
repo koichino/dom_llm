@@ -14,7 +14,7 @@ param startScheduleTime string = '08:00'
 @description('Time (HH:MM, 24h, UTC) to stop the VMSS on weekdays.')
 param stopScheduleTime string = '00:00'
 @description('TZ name (IANA/Windows) for display only; schedules use UTC times with advancedSchedule hours/minutes.')
-param timeZone string = 'UTC'
+param timeZone string = 'Asia/Tokyo'
 @description('VM Scale Set resource group name (parameter passed to runbooks).')
 param vmssResourceGroupName string
 @description('VM Scale Set name (parameter passed to runbooks).')
@@ -23,7 +23,12 @@ param vmssName string
 @description('Anchor start time (ISO 8601) for schedules startTime; default utcNow().')
 param scheduleAnchorTime string = utcNow()
 
-// Derive date component and compose first occurrence times
+@description('Version string to force republish of runbook content (change to trigger overwrite).')
+param runbookContentVersion string = '1.0.0'
+@description('Version to force recreation of jobSchedules (increment to rebuild job schedules)')
+param jobScheduleVersion string = '1'
+
+// Compose first occurrence times (anchor date portion + provided HH:MM)
 var anchorDate = split(scheduleAnchorTime, 'T')[0]
 var startTimeIso = '${anchorDate}T${startScheduleTime}:00Z'
 var stopTimeIso = '${anchorDate}T${stopScheduleTime}:00Z'
@@ -40,7 +45,7 @@ resource startRunbook 'Microsoft.Automation/automationAccounts/runbooks@2020-01-
     description: 'Start specified VM Scale Set'
     publishContentLink: {
       uri: runbookStartUrl
-      version: '1'
+      version: runbookContentVersion
     }
   }
 }
@@ -55,7 +60,7 @@ resource stopRunbook 'Microsoft.Automation/automationAccounts/runbooks@2020-01-1
     description: 'Stop specified VM Scale Set'
     publishContentLink: {
       uri: runbookStopUrl
-      version: '1'
+      version: runbookContentVersion
     }
   }
 }
@@ -65,7 +70,7 @@ resource stopRunbook 'Microsoft.Automation/automationAccounts/runbooks@2020-01-1
 resource weekdayStart 'Microsoft.Automation/automationAccounts/schedules@2020-01-13-preview' = {
   name: '${automationAccountName}/WeekdayStart'
   properties: {
-    description: 'Daily start schedule (${timeZone}) - filter to weekdays via runbook logic if needed'
+  description: 'Daily start schedule (${timeZone}) - filter to weekdays via runbook logic if needed'
   startTime: startTimeIso
     expiryTime: '2099-12-31T00:00:00Z'
     frequency: 'Day'
@@ -77,7 +82,7 @@ resource weekdayStart 'Microsoft.Automation/automationAccounts/schedules@2020-01
 resource weekdayStop 'Microsoft.Automation/automationAccounts/schedules@2020-01-13-preview' = {
   name: '${automationAccountName}/WeekdayStop'
   properties: {
-    description: 'Daily stop schedule (${timeZone}) - filter to weekdays via runbook logic if needed'
+  description: 'Daily stop schedule (${timeZone}) - filter to weekdays via runbook logic if needed'
   startTime: stopTimeIso
     expiryTime: '2099-12-31T00:00:00Z'
     frequency: 'Day'
@@ -88,39 +93,43 @@ resource weekdayStop 'Microsoft.Automation/automationAccounts/schedules@2020-01-
 
 // Job schedules linking schedule -> runbook with parameters
 resource weekdayStartJob 'Microsoft.Automation/automationAccounts/jobSchedules@2020-01-13-preview' = {
-  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStartJob')}'
+  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStartJob', jobScheduleVersion)}'
   properties: {
     runbook: {
       name: startRunbookName
     }
     schedule: {
-      name: weekdayStart.name
+    // For jobSchedules, the schedule name must be the short name (without automation account prefix)
+    name: 'WeekdayStart'
     }
     parameters: {
       ResourceGroupName: vmssResourceGroupName
       VMScaleSetName: vmssName
     }
   }
-  dependsOn: [ startRunbook ]
+  // Ensure both the runbook and the schedule exist before creating the job schedule
+  dependsOn: [ startRunbook, weekdayStart ]
 }
 
 resource weekdayStopJob 'Microsoft.Automation/automationAccounts/jobSchedules@2020-01-13-preview' = {
-  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStopJob')}'
+  name: '${automationAccountName}/${guid(automationAccountName, 'WeekdayStopJob', jobScheduleVersion)}'
   properties: {
     runbook: {
       name: stopRunbookName
     }
     schedule: {
-      name: weekdayStop.name
+    // Use short schedule name
+    name: 'WeekdayStop'
     }
     parameters: {
       ResourceGroupName: vmssResourceGroupName
       VMScaleSetName: vmssName
     }
   }
-  dependsOn: [ stopRunbook ]
+  dependsOn: [ stopRunbook, weekdayStop ]
 }
 
 output startRunbookDeployed string = startRunbook.name
 output stopRunbookDeployed string = stopRunbook.name
 output schedules string = 'WeekdayStart,WeekdayStop'
+output jobSchedules string = '${weekdayStartJob.name},${weekdayStopJob.name}'

@@ -8,16 +8,24 @@ param automationAccountName string
 @description('Name of the VM Scale Set (vmss) to manage (pass at deployment time)')
 param vmssName string
 
-@description('Raw URL (e.g. GitHub raw) to the start VMSS runbook PowerShell script')
-param runbookStartUrl string = ''
-@description('Raw URL (e.g. GitHub raw) to the stop VMSS runbook PowerShell script')
-param runbookStopUrl string = ''
+@description('Raw URL (GitHub raw) to the start VMSS runbook PowerShell script')
+param runbookStartUrl string = 'https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-start-vmss.ps1'
+@description('Raw URL (GitHub raw) to the stop VMSS runbook PowerShell script')
+param runbookStopUrl string = 'https://raw.githubusercontent.com/koichino/dom_llm/main/runbooks/runbook-stop-vmss.ps1'
 @description('HH:MM (UTC) weekday start time')
 param startScheduleTime string = '08:00'
 @description('HH:MM (UTC) weekday stop time')
 param stopScheduleTime string = '00:00'
 @description('Time zone label (display only)')
-param timeZone string = 'UTC'
+@allowed([
+  'UTC'
+  'Tokyo Standard Time'
+])
+param timeZone string = 'Tokyo Standard Time'
+@description('Runbook content version (change to force overwrite on redeploy)')
+param runbookContentVersion string = '1.0.0'
+@description('Version to force recreation of job schedules (change to recreate)')
+param jobScheduleVersion string = '1'
 
 // Automation Account module
 // Automation Account module
@@ -44,6 +52,7 @@ module vmss 'modules/vmss.bicep' = {
 module runbooks 'modules/runbooksAndSchedules.bicep' = {
   name: 'runbooksModule'
   scope: resourceGroup(resourceGroupName)
+  dependsOn: [ automation ]
   params: {
     automationAccountName: automationAccountName
     location: location
@@ -54,6 +63,8 @@ module runbooks 'modules/runbooksAndSchedules.bicep' = {
     timeZone: timeZone
     vmssResourceGroupName: resourceGroupName
     vmssName: vmssName
+    runbookContentVersion: runbookContentVersion
+  jobScheduleVersion: jobScheduleVersion
   }
 }
 
@@ -62,4 +73,5 @@ output automationPrincipalId string = automation.outputs.automationAccountPrinci
 output vmssPlaceholder string = vmss.outputs.placeholderMessage
 output deployedRunbooks string = runbooks.outputs.startRunbookDeployed
 output deployedSchedules string = runbooks.outputs.schedules
+output deployedJobSchedules string = runbooks.outputs.jobSchedules
 
