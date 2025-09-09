@@ -17,12 +17,10 @@ param vmssName string
 param runbookStartUrl string = 'https://raw.githubusercontent.com/koichino/dom_llm/main/infra/runbooks/runbook-start-vmss.ps1'
 @description('Raw URL (GitHub raw) to the stop VMSS runbook PowerShell script')
 param runbookStopUrl string = 'https://raw.githubusercontent.com/koichino/dom_llm/main/infra/runbooks/runbook-stop-vmss.ps1'
-@description('平日開始時刻 (HH:MM) 指定 timeZone のローカル時刻')
+@description('平日開始時刻 (HH:MM) JST固定 (Asia/Tokyo)')
 param startScheduleTime string = '08:00'
-@description('平日停止時刻 (HH:MM) 指定 timeZone のローカル時刻。24:00 可')
+@description('平日停止時刻 (HH:MM) JST固定。24:00 可 (翌日00:00解釈)')
 param stopScheduleTime string = '00:00'
-@description('スケジュール解釈用タイムゾーン (例: Tokyo Standard Time)')
-param timeZone string = 'Tokyo Standard Time'
 @description('Runbook content version (change to force overwrite on redeploy)')
 param runbookContentVersion string = '1.0.0'
 @description('Version to force recreation of job schedules (change to recreate)')
@@ -145,7 +143,6 @@ module runbooks 'modules/runbooksAndSchedules.bicep' = {
     runbookStopUrl: runbookStopUrl
     startScheduleTime: startScheduleTime
     stopScheduleTime: stopScheduleTime
-    timeZone: timeZone
     vmssResourceGroupName: resourceGroupName
     vmssName: vmssName
     runbookContentVersion: runbookContentVersion

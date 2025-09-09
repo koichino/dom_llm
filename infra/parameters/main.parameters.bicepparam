@@ -21,9 +21,8 @@ param runbookStopUrl  = 'https://raw.githubusercontent.com/koichino/dom_llm/main
 param runbookContentVersion = '1.0.1'     // Runbook コード更新時にインクリメント (publishContentLink.version)
 
 // スケジュール設定 (平日用)
-param startScheduleTime = '08:00'         // 平日開始 (HH:MM) 現地表記
-param stopScheduleTime  = '00:00'         // 平日停止 (00:00=翌日00:00)
-param timeZone = 'Asia/Tokyo'             // 表示/記録用タイムゾーン (テンプレート内部は変換しない)
+param startScheduleTime = '08:00'         // 平日開始 (HH:MM) JST 表記
+param stopScheduleTime  = '24:00'         // 平日停止 (00:00=翌日00:00)
 param jobScheduleVersion = '1'            // ジョブスケジュール GUID 再生成トリガ (変更で再作成)
 
 // 初回スケジュール開始日 (YYYY-MM-DD) ※任意指定/外部制御可  main.bicep の既定はデプロイ日 (utcNow) → 過去判定はしないシンプル運用

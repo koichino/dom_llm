@@ -107,6 +107,58 @@ az vmss show -g <rg> -n <vmssName> --query sku.capacity
 | JobSchedule Conflict | GUID 再生成されない | jobScheduleVersion を +1 |
 | SSH 接続不可 | 公開鍵誤り / セキュリティグループ | adminPublicKey 再確認 + NSG ルール調整 |
 
+## APIM の Soft Delete / 再デプロイ注意点
+API Management (APIM) は削除 (Delete) 後すぐには名前が解放されず、ソフトデリート状態 (保護期間) になります。この間に同じ `apimName` で再作成 (Bicep 再デプロイ) を試みると、以下のようなエラー/失敗が発生します:
+
+> Name is not available / cannot create because a soft-deleted service exists
+
+### 典型的な状況
+1. 既存 APIM を `az apim delete` あるいはポータルで削除。
+2. 即座に `infra/main.bicep` を再デプロイ (APIM モジュールは作成を試みる)。
+3. 名前衝突 (soft delete 保持中) により失敗。
+
+### 対処パターン
+| シナリオ | 推奨アクション |
+|----------|----------------|
+| 同じ名前で完全に作り直したい | ソフトデリートを purge してから再デプロイ |
+| APIM はしばらく不要 (他リソースだけ再デプロイ) | 一時的に `main.bicep` の APIM モジュール部分をコメントアウト / 削除 |
+| 削除後すぐ復旧したい (内容を残したい) | (現状テンプレートはバックアップ復元非対応) → purge せず保持し、新規構成は検討 |
+
+### ソフトデリート中の APIM 一覧表示
+```powershell
+az apim deletedservice list --location japaneast -o table
+```
+
+### 永久削除 (Purge) して名前を再利用可能にする
+⚠️ Purge は取り消し不能。完全にリソースと構成が失われます。
+```powershell
+az apim deletedservice purge --name <apimName> --location japaneast
+```
+
+### 再デプロイ前チェック (例)
+```powershell
+$apimName = 'apim-web'
+az apim deletedservice list --location japaneast --query "[?name=='$apimName']" -o table
+```
+出力に該当があれば purge するか、待機 (保持期間終了後に自動的に解放) してください。
+
+### よくある失敗パターンと解決
+| 症状 | 原因 | 対策 |
+|------|------|------|
+| APIM 作成で Name not available | ソフトデリート残骸 | purge 実行→再デプロイ |
+| purge コマンドで NotFound | 既に保持期間終了 / 名前解放済 | そのまま再デプロイ可 |
+| 再デプロイで別のプロパティ差分エラー | 既存生存 APIM が設定不一致 | 既存を手で調整 or 一旦削除→purge→再作成 |
+
+### テンプレート側で将来的に検討可能な拡張
+| 追加案 | 内容 |
+|--------|------|
+| `deployApim` / `reuseExistingApim` パラメータ | 条件付きモジュール化で再デプロイ柔軟性向上 |
+| バックアップ & 復元統合 | `az apim backup/restore` を CI に組み込み |
+| SKU 変更ガード | 破壊的 SKU 変更の事前チェック ロジック |
+
+> 現状テンプレートは APIM を無条件作成するため、ソフトデリート直後は purge しない限り失敗します。頻繁に構成を壊して試すフェーズでは、APIM モジュールを一時的にコメントアウトする運用が簡易です。
+
+
 ## 拡張アイデア
 | 要件 | 方向性 |
 |------|--------|

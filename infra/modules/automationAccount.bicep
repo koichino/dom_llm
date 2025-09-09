@@ -2,7 +2,7 @@
 param name string
 param location string = resourceGroup().location
 
-resource automationAccount 'Microsoft.Automation/automationAccounts@2020-01-13-preview' = {
+resource automationAccount 'Microsoft.Automation/automationAccounts@2023-11-01' = {
   name: name
   location: location
   identity: {
