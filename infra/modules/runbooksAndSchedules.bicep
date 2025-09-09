@@ -12,7 +12,7 @@ param runbookStopUrl string
 @description('Start time (HH:MM) in local timeZone (e.g. Tokyo Standard Time).')
 param startScheduleTime string = '08:00'
 @description('Stop time (HH:MM) in local timeZone. Use 24:00 for next-day midnight.')
-param stopScheduleTime string = '24:00'
+param stopScheduleTime string = '00:00'
 @description('TZ name (display only); schedules use UTC times.')
 param timeZone string = 'Asia/Tokyo'
 @description('VM Scale Set resource group name (parameter passed to runbooks).')

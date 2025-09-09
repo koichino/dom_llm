@@ -1,105 +1,126 @@
-# インフラ (Bicep) + Automation Runbook サンプル (日本語版)
+# ドメイン内 LLM 実験環境 向け Azure インフラ (Bicep) / Automation サンプル
 
-このリポジトリは Azure Automation Account + (将来的に拡張可能な) VM Scale Set 管理向けのモジュール型 Bicep 構成と、VMSS 起動/停止用 PowerShell Runbook、平日スケジュール (月～金) をデプロイするサンプルです。現在は統合された **サブスクリプション スコープ** テンプレート `infra/main.bicep` を使用します。
+現在の構成は単一のサブスクリプション スコープ Bicep (`infra/main.bicep`) に以下をまとめています:
 
-## 構成概要
-- `infra/main.bicep` : サブスクリプションスコープ (RG 作成 + モジュール呼び出し)
-- `infra/modules/automationAccount.bicep` : Automation Account + Managed Identity + 役割割り当て
-- `infra/modules/runbooksAndSchedules.bicep` : Runbook (Start/Stop) & 平日スケジュール & JobSchedule
-- `infra/modules/vmss.bicep` : 将来の VMSS 定義用プレースホルダ
-- `infra/parameters/main.parameters.json` : 単一パラメータファイル
-- `runbooks/runbook-start-vmss.ps1` / `runbooks/runbook-stop-vmss.ps1` : VMSS 起動/停止 Runbook (週末スキップロジックあり)
+- Resource Group の作成 (または再利用)
+- ネットワーク & Application Gateway (Standard_v2 L7 ロードバランサ)
+- VM Scale Set (Linux / cloud-init による簡易 HTTP サービス)
+- Automation Account (Managed Identity) + 起動/停止 Runbook + 平日スケジュール
+- API Management (最小プレースホルダ)
+- 役割割り当て (Automation MI → VMSS へ Contributor)
 
-## 主なパラメータ (抜粋)
-| 名前 | 説明 |
+パスワード認証は無効化し、VMSS は SSH 公開鍵必須運用です。
+
+## ディレクトリ概要
+| パス | 説明 |
 |------|------|
-| location | デプロイ先リージョン (例: japaneast) |
-| resourceGroupName | 作成/再利用する RG 名 |
-| reuseExistingRg | true=既存 RG 再利用 / false=新規作成 |
-| automationAccountName | Automation Account 名 (グローバル一意) |
-| vmssName | 対象 VMSS 名 (将来拡張用) |
-| startScheduleTime | ローカル (Tokyo Standard Time) 開始時刻 (HH:MM) |
-| stopScheduleTime | ローカル停止時刻 (HH:MM, 24:00 可) |
-| scheduleAnchorDate | 初回開始日 (YYYY-MM-DD, ローカル時間として解釈) |
-| runbookContentVersion | Runbook コンテンツ強制更新用バージョン |
-| jobScheduleVersion | JobSchedule 再生成用バージョン |
-| (削除) startJobScheduleSalt / stopJobScheduleSalt | 現在未使用 (過去の細粒度再生成向け) |
+| `infra/main.bicep` | サブスクリプション デプロイ統合テンプレート |
+| `infra/parameters/main.parameters.bicepparam` | 主要パラメータ定義 (一括指定) |
+| `infra/modules/network.bicep` | VNet / Subnets / NSG / Public IP / App Gateway 子リソース |
+| `infra/modules/vmss.bicep` | VMSS (Trusted Launch, SSH のみ, cloud-init) |
+| `infra/modules/automationAccount.bicep` | Automation Account + MI |
+| `infra/modules/runbooksAndSchedules.bicep` | Start / Stop Runbook + 平日スケジュール + JobSchedule |
+| `infra/modules/roleAssignments.bicep` | Automation MI → VMSS へのロール付与 |
+| `infra/modules/apim.bicep` | APIM プレースホルダ (将来拡張用) |
+| `infra/runbooks/runbook-start-vmss.ps1` | VMSS 起動 Runbook (週末スキップ含む) |
+| `infra/runbooks/runbook-stop-vmss.ps1`  | VMSS 停止 Runbook (週末スキップ含む) |
+| `infra/cloudinit/cloud-init.yaml` | VMSS インスタンス初期化 (簡易 Python HTTP) |
+| `.gitignore` | `build/` など生成物除外 |
+
+## 主なリソース関係
+Application Gateway のバックエンド プール ← VMSS NIC IP
+Automation Runbook (Start/Stop) → VMSS の容量制御 (スケジュール トリガ)
+
+## 代表的パラメータ (詳細は bicepparam 参照)
+| パラメータ | 用途 | 例 |
+|------------|------|----|
+| location | リージョン | japaneast |
+| resourceGroupName | RG 名 | rg-domllm-demo2 |
+| reuseExistingRg | 既存 RG 再利用フラグ | false |
+| automationAccountName | Automation Account | demo-auto-accnt2 |
+| vmssName | VMSS 名 | demo-vmss |
+| adminUsername | VM 管理ユーザ | azureuser |
+| adminPublicKey | SSH 公開鍵 (必須) | ssh-rsa / ed25519 キー |
+| startScheduleTime | 平日開始 (ローカル) | 08:00 |
+| stopScheduleTime | 平日停止 (24:00=翌日00:00) | 24:00 |
+| timeZone | スケジュールタイムゾーン | Asia/Tokyo |
+| scheduleAnchorDate | 初回基準日 | 2025-09-09 |
+| runbookContentVersion | Runbook 強制更新 | 1.0.1 |
+| jobScheduleVersion | JobSchedule 再作成トリガ | 2 |
 
 ## スケジュール仕様
-* 平日 (Mon–Fri) のみ実行 (`advancedSchedule.weekDays`).
-* `startScheduleTime`, `stopScheduleTime` は `timeZone` (既定: Tokyo Standard Time) のローカル時刻文字列。
-* `stopScheduleTime` を `24:00` とすると翌日 00:00 と解釈。
-* Automation 側で `startTime` は `YYYY-MM-DDTHH:MM:SS` 形式 + `timeZone` によりローカル変換されます。
+平日 (Mon–Fri) のみ動作。`startScheduleTime` / `stopScheduleTime` は `timeZone` 基準。`24:00` 指定は翌日 00:00 と解釈。Runbook 側に週末スキップロジックを実装。
 
-## デプロイ手順 (PowerShell / ルートディレクトリ)
+## デプロイ
+最小前提: Azure CLI ログイン済み / 対象サブスクリプション選択済み。
+
+### What-if
 ```powershell
-az login
-az account set --subscription <YOUR_SUBSCRIPTION_ID>
-
-# （必要ならパラメータファイルを編集）
-$deploymentName = "deploy-$(Get-Date -Format yyyyMMddHHmmss)"
-az deployment sub create `
-	--name $deploymentName `
-	--location japaneast `
-	--template-file infra/main.bicep `
-	--parameters @infra/parameters/main.parameters.json `
-	-o table
+az deployment sub what-if -n domllm-whatif -l japaneast --parameters infra/parameters/main.parameters.bicepparam
 ```
 
-### 出力確認
+### 実デプロイ
 ```powershell
-az deployment sub show --name $deploymentName --query properties.outputs
+$name = "domllm-$(Get-Date -Format yyyyMMddHHmmss)"
+az deployment sub create -n $name -l japaneast --parameters infra/parameters/main.parameters.bicepparam -o table
 ```
 
-### スケジュール / Runbook 確認
+### 出力参照
 ```powershell
-$params = Get-Content infra/parameters/main.parameters.json | ConvertFrom-Json
-$rg  = $params.parameters.resourceGroupName.value
-$aa  = $params.parameters.automationAccountName.value
-az automation runbook list -g $rg -a $aa -o table
-az automation schedule list -g $rg -a $aa -o table
+az deployment sub show -n $name --query properties.outputs
 ```
 
-## バージョン/再生成の運用ルール
-| 目的 | 変更する値 |
-|------|-------------|
-| Runbook スクリプト内容更新を強制 | `runbookContentVersion` をインクリメント |
-| Start/Stop 両 JobSchedule 再生成 | `jobScheduleVersion` をインクリメント |
-| Start/Stop JobSchedule 再生成 | `jobScheduleVersion` をインクリメント |
-| 初回発火日をずらす | `scheduleAnchorDate` を未来日 (YYYY-MM-DD) へ |
-
-## トラブルシュート
-| 症状 | 原因 | 対処 |
-|------|------|------|
-| Schedule BadRequest (startTime) | 過去日時 / 不正フォーマット | `scheduleAnchorDate` を未来日に / HH:MM 形式確認 |
-| jobSchedule Conflict | GUID シード同一 | `jobScheduleVersion` か salt を変更 |
-| Runbook がリンク表示されない | jobSchedule 生成失敗 | Conflict 解消後再デプロイ |
-| 時刻がずれている | ローカル/JST と UTC の解釈ミス | Local モード (現行) では `timeZone` を正しく維持 |
-
-## セキュリティ / ベストプラクティス
-* Managed Identity を利用し資格情報をコードに埋め込まない。
-* 最小権限 (Contributor など必要最小ロール) を対象 RG / VMSS に付与。
-* Bicep モジュールは小さく分割し API バージョンを固定。
-* CI/CD は GitHub Actions + OIDC (`azure/login`) + Key Vault シークレット参照推奨。
-
-## 既存 VMSS への権限付与
-`automation/assign-role-to-vmss.ps1` を利用して Automation Account MI に対象 VMSS への Contributor を付与可能:
-```powershell
-./automation/assign-role-to-vmss.ps1 -ResourceGroupName <RG> -AutomationAccountName <AA> -VmssName <VMSS>
+## SSH 公開鍵例 (作成)
+```bash
+ssh-keygen -t ed25519 -C "vmss-admin" -f id_vmss
+# id_vmss.pub の内容を adminPublicKey に貼り付け
 ```
 
-## 休日/祝日除外など拡張案
-| 要件 | 方針 (例) |
-|------|-----------|
-| 祝日スキップ | Runbook 冒頭で日本の祝日 API/テーブルを参照し早期 return |
-| 複数時間帯 | 追加スケジュールと別 Runbook/パラメータ化 |
-| 地域別時差 | `timeZone` パラメータを許可配列拡張 + 必要ならローカル→UTC 変換モード復活 |
+## バージョン管理 (再生成トリガ)
+| 対象 | インクリメントで何が起こるか |
+|------|------------------------------|
+| runbookContentVersion | Runbook 本体 (PublishContentLink) 更新強制 |
+| jobScheduleVersion | Start / Stop JobSchedule GUID 再生成 |
+| scheduleAnchorDate | 初回 startTime の基準日を変更 |
+
+## セキュリティ要点
+- VMSS は SSH 公開鍵のみ (PasswordLogin 無効)
+- Automation MI に必要最小ロール (VMSS Contributor) のみ付与
+- Trusted Launch (Secure Boot + vTPM) 有効化
+- 生成物 (`build/`) は Git 管理外
+
+## 運用コマンド例
+```powershell
+# Runbook / スケジュール一覧
+az automation runbook list -g <rg> -a <automationAccount> -o table
+az automation schedule list -g <rg> -a <automationAccount> -o table
+
+# VMSS インスタンス数確認
+az vmss show -g <rg> -n <vmssName> --query sku.capacity
+```
+
+## トラブルシュート (抜粋)
+| 事象 | 原因例 | 対処 |
+|------|--------|------|
+| Schedule 作成失敗 | 過去日時指定 | scheduleAnchorDate を未来日へ |
+| Runbook 未更新 | version 未変更 | runbookContentVersion を +1 |
+| JobSchedule Conflict | GUID 再生成されない | jobScheduleVersion を +1 |
+| SSH 接続不可 | 公開鍵誤り / セキュリティグループ | adminPublicKey 再確認 + NSG ルール調整 |
+
+## 拡張アイデア
+| 要件 | 方向性 |
+|------|--------|
+| HTTPS 化 | AppGW へ証明書 (Key Vault / PFX) + HTTPS Listener 追加 |
+| VMSS Autoscale | `capacity` 固定→Autoscale ルール (CPU / Schedule) 導入 |
+| ログ収集 | Log Analytics + Diagnostic Settings 追加 |
+| Secrets 管理 | Runbook の外部参照を Key Vault 化 |
+| 祝日スキップ | Runbook 内 API / テーブル参照で条件分岐 |
 
 ## クリーンアップ
 ```powershell
-az group delete --name <resourceGroupName> --yes --no-wait
+az group delete -n <resourceGroupName> --yes --no-wait
 ```
 
 ---
-質問や追加要望 (祝日対応/本番向け強化など) があれば Issue / PR / 追加依頼をしてください。
+追加要望や機能拡張 (Autoscale / HTTPS / Key Vault 連携 など) は Issue / PR で提案してください。
 

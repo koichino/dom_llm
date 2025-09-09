@@ -1,0 +1,30 @@
+#cloud-config
+package_update: false
+write_files:
+  - path: /etc/systemd/system/simple-http.service
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Simple HTTP Server on :80 (python -m http.server)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=/var/www/html
+      ExecStart=/usr/bin/python3 -m http.server 80
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /var/www/html/index.txt
+    permissions: "0644"
+    owner: root:root
+    content: |
+      hello from vmss
+runcmd:
+  - systemctl daemon-reload
+  - bash -lc 'hostname > /var/www/html/hostname.txt'
+  - systemctl enable --now simple-http.service

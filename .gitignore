@@ -1,0 +1,16 @@
+# Ignore Bicep build output
+build/
+
+# Local environment / tooling
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python / Node (if added later)
+__pycache__/
+node_modules/
+
+# Azure deployment temp files
+.azure/
