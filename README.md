@@ -11,6 +11,61 @@
 
 パスワード認証は無効化し、VMSS は SSH 公開鍵必須運用です。
 
+## 事前インストール / 必要ツール
+ローカル (デプロイ実行端末) 側で以下が利用可能であること:
+
+| ツール / モジュール | 用途 | 確認コマンド (PowerShell) |
+|---------------------|------|---------------------------|
+| Azure CLI (最新推奨) | Bicep 組込み/サブスクリプション デプロイ | `az version` |
+| Bicep CLI (az に同梱) | Lint/What-if (任意) | `bicep --version` |
+| PowerShell 7+ (任意) | 補助スクリプト実行 | `pwsh -v` |
+| OpenSSH クライアント | SSH 接続 | `ssh -V` |
+
+Automation Runbook 実行環境 (Azure 側) で必要になるモジュール: `Az.Accounts`, `Az.Compute`. 既定の Cloud / 最新 Runtime では自動解決されますが、古い Runtime を使う場合は Gallery からインポートしてください。
+
+## 最小前提 (サブスクリプション / 権限)
+| 前提 | 内容 |
+|------|------|
+| サブスクリプション権限 | `Owner` か少なくとも RG 作成 + ロール割り当てが可能な権限 |
+| リージョン | 例: `japaneast` (App Gateway / Automation / APIM 利用可能) |
+| ネーム重複回避 | `automationAccountName`, `apimName` はグローバル一意性要件に注意 |
+| SSH 公開鍵 | `adminPublicKey` に設定 (パスワード無し) |
+
+## クイック デプロイ手順 (最小)
+
+1. ログイン / サブスクリプション選択
+```powershell
+az login
+az account set --subscription "<SUBSCRIPTION_ID_OR_NAME>"
+```
+2. SSH 公開鍵 (未作成なら)
+```powershell
+ssh-keygen -t ed25519 -C vmss-admin -f .\id_vmss
+```
+3. パラメータファイル修正 (`infra/parameters/main.parameters.bicepparam` の `adminPublicKey` を `id_vmss.pub` 内容に置換)
+4. What-if (任意)
+```powershell
+$region = 'japaneast'   # リージョン (東日本). 変更する場合は bicepparam の location も合わせる
+$name   = "domllm-$(Get-Date -Format yyyyMMddHHmmss)"  # デプロイメント名 (一意性確保のため時刻付与)
+az deployment sub what-if -n "${name}-whatif" -l $region --parameters infra/parameters/main.parameters.bicepparam
+```
+5. デプロイ
+```powershell
+$region = 'japaneast'   # リージョン (東日本). 変更する場合は bicepparam の location も合わせる
+$name   = "domllm-$(Get-Date -Format yyyyMMddHHmmss)"  # デプロイメント名 (一意性確保のため時刻付与)
+az deployment sub create -n $name -l $region --parameters infra/parameters/main.parameters.bicepparam -o table
+```
+6. 出力確認
+```powershell
+az deployment sub show -n $name --query properties.outputs
+```
+7. VMSS へ SSH (初回インスタンス起動後)
+```powershell
+# パブリック IP は AppGW 用。VMSS へは内部経路 (Bastion 等) を検討。デモでは AppGW 経由 HTTP のみ想定。
+```
+
+> APIM を頻繁に作り直す場合はソフトデリート衝突に注意 (後述)。
+
 ## ディレクトリ概要
 | パス | 説明 |
 |------|------|
@@ -43,7 +98,7 @@ Automation Runbook (Start/Stop) → VMSS の容量制御 (スケジュール ト
 | adminPublicKey | SSH 公開鍵 (必須) | ssh-rsa / ed25519 キー |
 | startScheduleTime | 平日開始 (ローカル) | 08:00 |
 | stopScheduleTime | 平日停止 (24:00=翌日00:00) | 24:00 |
-| timeZone | スケジュールタイムゾーン | Asia/Tokyo |
+| timeZone | (旧) スケジュールタイムゾーン -> 現在は内部固定 UTC+TZ 変換 | (内部固定) |
 | scheduleAnchorDate | 初回基準日 | 2025-09-09 |
 | runbookContentVersion | Runbook 強制更新 | 1.0.1 |
 | jobScheduleVersion | JobSchedule 再作成トリガ | 2 |
@@ -51,24 +106,22 @@ Automation Runbook (Start/Stop) → VMSS の容量制御 (スケジュール ト
 ## スケジュール仕様
 平日 (Mon–Fri) のみ動作。`startScheduleTime` / `stopScheduleTime` は `timeZone` 基準。`24:00` 指定は翌日 00:00 と解釈。Runbook 側に週末スキップロジックを実装。
 
-## デプロイ
-最小前提: Azure CLI ログイン済み / 対象サブスクリプション選択済み。
+## デプロイ (詳細)
+上のクイック手順と同じ変数 `$region`, `$name` を再利用してください。
 
-### What-if
+### 追加例: What-if 差分のみ JSON で取得
 ```powershell
-az deployment sub what-if -n domllm-whatif -l japaneast --parameters infra/parameters/main.parameters.bicepparam
+az deployment sub what-if -n "${name}-whatif" -l $region --parameters infra/parameters/main.parameters.bicepparam -o json > whatif.json
 ```
 
-### 実デプロイ
+### 追加例: location を一時上書き (実験)
 ```powershell
-$name = "domllm-$(Get-Date -Format yyyyMMddHHmmss)"
-az deployment sub create -n $name -l japaneast --parameters infra/parameters/main.parameters.bicepparam -o table
+$region = 'japaneast'
+az deployment sub create -n $name -l $region --parameters infra/parameters/main.parameters.bicepparam -o table
 ```
 
-### 出力参照
-```powershell
-az deployment sub show -n $name --query properties.outputs
-```
+### 再実行時の注意
+同一 `$name` を再利用すると以前のデプロイ履歴と区別しづらいので、常にタイムスタンプ付きで再生成推奨。
 
 ## SSH 公開鍵例 (作成)
 ```bash
